@@ -317,7 +317,7 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
                     >
                       <TuiPathsProvider
                         value={{
-                          cwd: process.cwd(),
+                          cwd: directory,
                           home: global.home,
                           state: global.state,
                           worktree: global.data + "/worktree",
