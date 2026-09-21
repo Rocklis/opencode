@@ -4,13 +4,15 @@ import { once } from "node:events"
 import { createHash } from "node:crypto"
 import path from "node:path"
 import { app, BrowserWindow, nativeImage } from "electron"
-import { Browser } from "@opencode-ai/plugin-browser/rpc"
-import { OpenCode } from "@opencode-ai/client"
+import { Browser } from "@opencode/plugin-browser/rpc"
+import { OpenCode } from "@opencode/client"
 import { Effect, Fiber, Schema, Stream } from "effect"
 import { createBrowserPane } from "../../src/main/browser-pane"
 import { bindIpcEvents, ipcEventStream } from "../../src/main/ipc-events"
 import { Smoke } from "./contract"
 import { verifyTargets } from "./targets"
+import { openDatabase } from "../../src/main/storage/database"
+import { createStateStore } from "../../src/main/storage/state"
 
 type Output<Name extends Browser.Method> = Schema.Schema.Type<Extract<Browser.Operation, { name: Name }>["output"]>
 
@@ -29,7 +31,25 @@ async function main() {
   app.setPath("userData", path.join(root, "electron-data"))
   app.on("window-all-closed", () => {})
   await app.whenReady()
+  let unavailable = true
+  let finishLoading: (() => void) | undefined
   const web = createServer((request, response) => {
+    if (request.url === "/loading") {
+      response.writeHead(200, { "content-type": "text/html" })
+      response.write("<!doctype html><html><body>Loading")
+      finishLoading = () => response.end("</body></html>")
+      return
+    }
+    if (request.url === "/finish-loading") {
+      finishLoading?.()
+      finishLoading = undefined
+      response.end()
+      return
+    }
+    if (request.url === "/unreachable" && unavailable) {
+      request.socket.destroy()
+      return
+    }
     if (request.url === "/cors-allowed" || request.url === "/cors-denied") {
       if (request.url === "/cors-allowed") response.setHeader("access-control-allow-origin", "*")
       response.setHeader("content-type", "text/plain")
@@ -126,7 +146,10 @@ async function main() {
   const location = { directory: process.env.SMOKE_SERVER_FILES! }
   const rpc = client.rpc(Smoke)
   const session = await client.session.create({ title: "Browser suite", location })
-  const pane = createBrowserPane()
+  const database = openDatabase(path.join(root, "browser.sqlite"))
+  const storage = createStateStore(database.db)
+  const pane = createBrowserPane(storage)
+  let restored: ReturnType<typeof createBrowserPane> | undefined
   const win = new BrowserWindow({ show: false, width: 1100, height: 800, webPreferences: { sandbox: true } })
   const readyToShow = once(win, "ready-to-show")
   await win.loadURL("about:blank")
@@ -138,6 +161,7 @@ async function main() {
   )
   const ipcErrors: string[] = []
   const replaced: string[] = []
+  const focusEvents: string[] = []
   const inventories = new Map<string, Browser.State | null>()
   const unbind = await Effect.runPromise(bindIpcEvents(win.webContents.id))
   const events = Effect.runFork(
@@ -150,6 +174,7 @@ async function main() {
             inventories.set(event.bindingID, event.event.state)
             return
           }
+          focusEvents.push(event.event.tabID)
           if (!inventories.get(event.bindingID)?.tabs.some((tab) => tab.id === event.event.tabID))
             ipcErrors.push("Focus arrived before its tab inventory")
           pane.layout(win, event.bindingID, {
@@ -188,6 +213,7 @@ async function main() {
   try {
     await verifyTargets(win, fixture)
     await pane.register(win, "suite", {
+      serverKey: "browser-suite",
       sessionID: session.id,
       endpoint: { url: process.env.SMOKE_URL!, password: process.env.SMOKE_PASSWORD },
     })
@@ -196,6 +222,19 @@ async function main() {
     assert.equal((await call("tabs.list", {})).tabs.length, 2)
     const tabID = first.id
     assert.equal(first.url, fixture + "/")
+    assert.equal((await call("navigate", { tabID, url: `${fixture}/unreachable` })).loadError, "502 Bad Gateway")
+    const failed = await until(async () => {
+      const tab = (await call("tabs.list", {})).tabs.find((tab) => tab.id === tabID)
+      return tab?.loadError && !tab.loading ? tab : undefined
+    })
+    assert.equal(failed.url, `${fixture}/unreachable`)
+    assert.equal(failed.loadError, "502 Bad Gateway")
+    await until(async () => inventories.get("suite")?.tabs.find((tab) => tab.id === tabID)?.loadError)
+    assert.equal((await call("tabs.list", {})).tabs.find((tab) => tab.id === second.id)?.loadError, undefined)
+    unavailable = false
+    assert.equal((await call("reload", { tabID })).loadError, undefined)
+    assert.equal((await call("navigate", { tabID, url: fixture })).loadError, undefined)
+    console.log("PASS browser navigation failure state and retry")
     const networkProof = await call("evaluate", {
       tabID,
       script: `(async () => ({
@@ -547,15 +586,54 @@ async function main() {
     )
     assert.deepEqual(ipcErrors, [])
     await pane.register(win, "replacement", {
+      serverKey: "browser-suite",
       sessionID: session.id,
       endpoint: { url: process.env.SMOKE_URL!, password: process.env.SMOKE_PASSWORD },
     })
     await until(async () => replaced.includes("suite"))
+    await until(async () => {
+      const state = await call("tabs.list", {})
+      return state.tabs.length === 2 && state.tabs.every((tab) => !tab.loading && tab.url !== "about:blank")
+    })
+    const saved = await call("tabs.list", {})
+    assert.equal(saved.tabs.length, 2)
+    await call("evaluate", { tabID, script: "window.restoreOnlyInMemory = true; null" })
+    await pane.dispose()
+    storage.flush()
+    restored = createBrowserPane(storage)
+    const focusCount = focusEvents.length
+    await restored.register(win, "restored", {
+      serverKey: "browser-suite",
+      sessionID: session.id,
+      endpoint: { url: process.env.SMOKE_URL!, password: process.env.SMOKE_PASSWORD },
+    })
+    await until(async () => {
+      const state = await call("tabs.list", {})
+      return (
+        state.tabs.length === saved.tabs.length && state.tabs.every((tab) => !tab.loading && tab.url !== "about:blank")
+      )
+    })
+    const reopened = await call("tabs.list", {})
+    assert.deepEqual(
+      reopened.tabs.map((tab) => ({ id: tab.id, url: tab.url })),
+      saved.tabs.map((tab) => ({ id: tab.id, url: tab.url })),
+    )
+    assert.equal(reopened.focusedTabID, saved.focusedTabID)
+    await Promise.all(
+      saved.tabs.map(async (tab) => {
+        assert.equal((await call("evaluate", { tabID: tab.id, script: "location.href" })).value, tab.url)
+      }),
+    )
+    assert.equal((await call("evaluate", { tabID, script: "typeof window.restoreOnlyInMemory" })).value, "undefined")
+    assert.equal(focusEvents.length, focusCount, "Restoring URLs must not select Browser over the saved pane tab")
     console.log(
       `PASS ${visited.size} browser operations over physical authenticated HTTP, including file bytes in both directions`,
     )
   } finally {
+    await restored?.dispose()
     await pane.dispose()
+    storage.close()
+    database.close()
     await Effect.runPromise(Fiber.interrupt(events))
     await Effect.runPromise(unbind)
     win.destroy()

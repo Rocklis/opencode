@@ -1,14 +1,8 @@
 import type { Config, Path, Project, ProviderAuthResponse } from "@/runtime/server/types"
-import type {
-  LocationGetInput,
-  LocationGetOutput,
-  ProjectCurrentInput,
-  ProjectCurrentOutput,
-  ProjectListOutput,
-} from "@opencode-ai/client/promise"
+import type { LocationGetInput, LocationGetOutput, ProjectListOutput } from "@opencode/client/promise"
 import { showToast } from "@/shell/notifications/toast"
-import { getFilename } from "@opencode-ai/util/path"
-import { retry } from "@opencode-ai/util/retry"
+import { getFilename } from "@opencode/util/path"
+import { retry } from "@opencode/util/retry"
 import { reconcile, type SetStoreFunction, type Store } from "solid-js/store"
 import type { State } from "./types"
 import { cmp, normalizeProjectInfo } from "./utils"
@@ -61,7 +55,6 @@ export const loadGlobalConfigQuery = (scope: ServerScope) =>
 
 type ProjectApi = {
   readonly list: () => Promise<ProjectListOutput>
-  readonly current: (input?: ProjectCurrentInput) => Promise<ProjectCurrentOutput>
 }
 type LocationApi = { readonly get: (input?: LocationGetInput) => Promise<LocationGetOutput> }
 
@@ -100,7 +93,7 @@ export async function bootstrapGlobal(input: {
           data.map((project) =>
             withWorktreeInventory(
               project,
-              input.queryClient.getQueryData(worktreeInventoryKey(input.scope, project.worktree)),
+              input.queryClient.getQueryData(worktreeInventoryKey(input.scope, project.id)),
             ),
           ),
         ),
@@ -132,6 +125,7 @@ export async function bootstrapDirectory(input: {
   mcp: boolean
   api: {
     readonly project: ProjectApi
+    readonly location: LocationApi
   }
   store: Store<State>
   setStore: SetStoreFunction<State>
@@ -155,8 +149,8 @@ export async function bootstrapDirectory(input: {
     seededProject
       ? undefined
       : () =>
-          retry(() => input.api.project.current({ location: { directory: input.directory } })).then((project) =>
-            input.setStore("project", project.id),
+          retry(() => input.api.location.get({ location: { directory: input.directory } })).then((location) =>
+            input.setStore("project", location.project.id),
           ),
   ].filter((task): task is () => Promise<void> => !!task)
 

@@ -1,4 +1,4 @@
-import { Plugin } from "@opencode-ai/plugin/tui"
+import { Plugin } from "@opencode/plugin/tui"
 import { createMemo, Show } from "solid-js"
 import { FilePath } from "../../ui/file-path"
 import { useWorkingDirectoryActions } from "../../ui/working-directory-actions"
@@ -31,7 +31,7 @@ function View(props: { context: Plugin.Context; sessionID: string }) {
           <FilePath
             value={value()}
             maxWidth={38}
-            fg={actions.hovered() ? props.context.theme.text.default : props.context.theme.text.subdued}
+            fg={actions.hovered() ? props.context.theme.text.base : props.context.theme.text.muted}
           />
         </box>
       )}

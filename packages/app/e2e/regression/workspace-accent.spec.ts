@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test"
-import type { OpenCodeEvent, WorktreeDirectory } from "@opencode-ai/client/promise"
-import { base64Encode } from "@opencode-ai/util/encode"
+import type { OpenCodeEvent, WorktreeDirectory } from "@opencode/client/promise"
+import { base64Encode } from "@opencode/util/encode"
 import { mockOpenCodeServer } from "../utils/mock-server"
 import { expectAppVisible, expectSessionReady } from "../utils/waits"
 
@@ -98,7 +98,7 @@ for (const theme of ["light", "dark"] as const) {
       const refreshed = page.waitForResponse(
         (response) =>
           new URL(response.url()).pathname === "/api/worktree" &&
-          new URL(response.url()).searchParams.get("location[directory]") === root &&
+          new URL(response.url()).searchParams.get("projectID") === projectID &&
           response.request().method() === "GET",
       )
       view.worktrees.push({ directory: workspace, strategy: "git" })
@@ -228,7 +228,7 @@ async function openSession(page: Page, directory: string, worktrees = [...invent
   const loaded = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === "/api/worktree" &&
-      new URL(response.url()).searchParams.get("location[directory]") === root &&
+      new URL(response.url()).searchParams.get("projectID") === projectID &&
       response.request().method() === "GET",
   )
   await page.goto(

@@ -1,9 +1,11 @@
-import type { BrowserPaneEvent } from "@opencode-ai/app/desktop"
-import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
-import type { DesktopNativeBundle } from "@opencode-ai/app/i18n/desktop-native"
-import type { UpdaterState } from "@opencode-ai/app/updater"
-import type { WslServersPlatform } from "@opencode-ai/app/wsl/types"
+import type { BrowserPaneEvent } from "@opencode/app/desktop"
+import type { DesktopMenuAction } from "@opencode/app/desktop-menu"
+import type { DesktopNativeBundle } from "@opencode/app/i18n/desktop-native"
+import type { UpdaterState } from "@opencode/app/updater"
+import type { WslServersPlatform } from "@opencode/app/wsl/types"
+import type { SshPlatform } from "@opencode/app/ssh"
 import type { BrowserPaneRequest } from "../shared/ipc-rpc/browser"
+import type { WindowBootstrap } from "../shared/window-bootstrap"
 import type {
   ClipboardImage,
   DirectoryPickerOptions,
@@ -31,6 +33,7 @@ export type ElectronAPI = {
     onEvent(callback: (value: { readonly bindingID: string; readonly event: BrowserPaneEvent }) => void): () => void
   }
   wslServers: WslServersAPI
+  sshServers: SshPlatform
   updater: UpdaterAPI
   consumeInitialDeepLinks(): Promise<string[]>
   getDefaultServerUrl(): Promise<string | null>
@@ -51,6 +54,7 @@ export type ElectronAPI = {
   draftBlobPut(data: ArrayBuffer): Promise<string>
   draftBlobGet(id: string): Promise<ArrayBuffer | null>
   getWindowID(): string
+  getWindowBootstrap(): WindowBootstrap
   themeReady(): Promise<void>
   onMenuCommand(cb: (id: string) => void): () => void
   onDeepLink(cb: (urls: string[]) => void): () => void

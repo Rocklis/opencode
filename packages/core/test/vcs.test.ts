@@ -4,19 +4,19 @@ import fs from "fs/promises"
 import path from "path"
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Schema, Scope, Stream } from "effect"
 import { TestClock } from "effect/testing"
-import { LayerNode } from "@opencode-ai/util/effect/layer-node"
-import { AppProcess } from "@opencode-ai/util/process"
-import { FSUtil } from "@opencode-ai/util/fs-util"
-import { Git } from "@opencode-ai/core/git"
-import { Bus } from "@opencode-ai/core/bus"
-import { Location } from "@opencode-ai/core/location"
-import { AbsolutePath } from "@opencode-ai/core/schema"
-import { State } from "@opencode-ai/core/state"
-import { Vcs } from "@opencode-ai/core/vcs"
-import { VcsGitPlugin } from "@opencode-ai/core/plugin/vcs/git"
-import type { VcsDefinition, VcsDiffInput } from "@opencode-ai/plugin/effect/vcs"
-import { FileSystem } from "@opencode-ai/schema/filesystem"
-import { VcsEvent } from "@opencode-ai/schema/vcs-event"
+import { LayerNode } from "@opencode/util/effect/layer-node"
+import { AppProcess } from "@opencode/util/process"
+import { FSUtil } from "@opencode/util/fs-util"
+import { Git } from "@opencode/core/git"
+import { Bus } from "@opencode/core/bus"
+import { Location } from "@opencode/core/location"
+import { AbsolutePath } from "@opencode/core/schema"
+import { State } from "@opencode/core/state"
+import { Vcs } from "@opencode/core/vcs"
+import { VcsGitPlugin } from "@opencode/core/plugin/vcs/git"
+import type { VcsDefinition, VcsDiffInput } from "@opencode/plugin/effect/vcs"
+import { FileSystem } from "@opencode/schema/filesystem"
+import { VcsEvent } from "@opencode/schema/vcs-event"
 import { location } from "./fixture/location"
 import { tmpdir } from "./fixture/tmpdir"
 import { it, testEffect } from "./lib/effect"
@@ -126,7 +126,7 @@ describe("Vcs", () => {
           editor.default.set("custom")
         })
 
-        expect(yield* vcs.info()).toEqual({ branch: { current: "feature", default: "main" } })
+        expect(yield* vcs.info()).toEqual({ provider: "custom", branch: { current: "feature", default: "main" } })
         expect(yield* vcs.base()).toBeNull()
         expect(yield* vcs.branches()).toEqual(["feature", "main"])
         expect(yield* vcs.status()).toEqual([{ file: "file.txt", additions: 1, deletions: 0, status: "added" }])
@@ -146,10 +146,10 @@ describe("Vcs", () => {
       Effect.gen(function* () {
         const vcs = yield* Vcs.Service
         const registration = yield* vcs.transform((editor) => editor.add(provider({ id: "git" })))
-        expect(yield* vcs.info()).toEqual({ branch: { current: "feature", default: "main" } })
+        expect(yield* vcs.info()).toEqual({ provider: "git", branch: { current: "feature", default: "main" } })
 
         yield* registration.dispose
-        expect(yield* vcs.info()).toEqual({ branch: { current: "main", default: undefined } })
+        expect(yield* vcs.info()).toEqual({ provider: "git", branch: { current: "main", default: undefined } })
       }),
     ),
   )
@@ -188,7 +188,7 @@ describe("Vcs", () => {
         }),
       )
       expect(reads).toEqual(["final"])
-      expect(yield* vcs.info()).toEqual({ branch: { current: "final" } })
+      expect(yield* vcs.info()).toEqual({ provider: "custom", branch: { current: "final" } })
     }),
   )
 
@@ -456,7 +456,7 @@ describe("Vcs", () => {
                 ),
               )
               expect((yield* vcs.status())[0]?.file).toBe("config.txt")
-              expect(yield* vcs.info()).toEqual({ branch: { current: "initial" } })
+              expect(yield* vcs.info()).toEqual({ provider: "git", branch: { current: "initial" } })
               yield* Deferred.succeed(accepted, undefined)
             }),
           ).pipe(Effect.forkScoped({ startImmediately: true }))
@@ -466,7 +466,7 @@ describe("Vcs", () => {
           yield* Deferred.succeed(release, undefined)
           yield* Fiber.join(configured)
           expect(Option.getOrUndefined(yield* Fiber.join(updates))?.data.branch).toBe("config")
-          expect(yield* vcs.info()).toEqual({ branch: { current: "config" } })
+          expect(yield* vcs.info()).toEqual({ provider: "git", branch: { current: "config" } })
           expect(reads).toEqual(["initial", "filesystem", "config"])
         }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)))
       }),
@@ -502,7 +502,7 @@ describe("Vcs", () => {
         })
         yield* bus.publish(Done, {})
         const events = (yield* Fiber.join(updates)).filter((event) => event.type === VcsEvent.BranchUpdated.type)
-        expect(yield* vcs.info()).toEqual({ branch: { current: "listener" } })
+        expect(yield* vcs.info()).toEqual({ provider: "custom", branch: { current: "listener" } })
         expect(events.length).toBeGreaterThanOrEqual(2)
         expect(events.at(-1)?.data.branch).toBe((yield* vcs.info()).branch.current)
       }).pipe(Effect.ensuring(unsubscribe))
@@ -567,7 +567,7 @@ describe("Vcs", () => {
         })
         const vcs = yield* Vcs.Service
         const bus = yield* Bus.Service
-        expect(yield* vcs.info()).toEqual({ branch: { current: "main", default: undefined } })
+        expect(yield* vcs.info()).toEqual({ provider: "git", branch: { current: "main", default: undefined } })
 
         const updated = yield* bus
           .subscribe(VcsEvent.BranchUpdated)
@@ -575,14 +575,14 @@ describe("Vcs", () => {
         yield* Effect.promise(() => $`git checkout -q -b feature`.cwd(directory).quiet())
 
         yield* bus.publish(FileSystem.Event.Changed, { file: path.join(directory, "HEAD"), event: "change" })
-        expect(yield* vcs.info()).toEqual({ branch: { current: "main", default: undefined } })
+        expect(yield* vcs.info()).toEqual({ provider: "git", branch: { current: "main", default: undefined } })
 
         yield* bus.publish(FileSystem.Event.Changed, { file: path.join(directory, ".git", "HEAD"), event: "change" })
         expect(yield* Fiber.join(updated)).toMatchObject({
           _tag: "Some",
           value: { location: { directory }, data: { branch: "feature" } },
         })
-        expect(yield* vcs.info()).toEqual({ branch: { current: "feature", default: "main" } })
+        expect(yield* vcs.info()).toEqual({ provider: "git", branch: { current: "feature", default: "main" } })
       }),
     ),
   )

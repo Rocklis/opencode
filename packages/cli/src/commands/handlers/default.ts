@@ -1,6 +1,6 @@
-import { LayerNode } from "@opencode-ai/util/effect/layer-node"
-import { Global } from "@opencode-ai/util/global"
-import { run } from "@opencode-ai/tui"
+import { LayerNode } from "@opencode/util/effect/layer-node"
+import { Global } from "@opencode/util/global"
+import { run } from "@opencode/tui"
 import { Commands } from "../commands"
 import { Runtime } from "../../framework/runtime"
 import { Config } from "../../config"
@@ -8,7 +8,7 @@ import { Context, Effect, Fiber, FileSystem, Option, Queue } from "effect"
 import { ServerConnection } from "../../services/server-connection"
 import { Updater } from "../../services/updater"
 import { UpdatePreflight } from "../../services/update-preflight"
-import { Npm } from "@opencode-ai/util/npm"
+import { Npm } from "@opencode/util/npm"
 import { OPENCODE_ARTIFACT, OPENCODE_CHANNEL, OPENCODE_VERSION } from "../../version"
 import { Env } from "../../env"
 
@@ -47,7 +47,14 @@ export default Runtime.handler(Commands, (input) =>
       ),
     )
     const updater = yield* Updater.Service
-    const update = yield* updater.run().pipe(Effect.forkScoped)
+    let installing: string | undefined
+    const updateListeners = new Set<(version: string) => void>()
+    const update = yield* updater
+      .run((version) => {
+        installing = version
+        updateListeners.forEach((notify) => notify(version))
+      })
+      .pipe(Effect.ensuring(Effect.sync(() => (installing = undefined))), Effect.forkScoped)
     preflight.loading()
     const config = yield* Config.Service
     const npm = yield* Npm.Service
@@ -93,7 +100,13 @@ export default Runtime.handler(Commands, (input) =>
             ),
             { signal },
           ),
-        check: (signal) => runPromise(Fiber.join(update).pipe(Effect.flatMap(() => updater.check())), { signal }),
+        check: (signal, notify) => {
+          if (installing) notify(installing)
+          updateListeners.add(notify)
+          return runPromise(Fiber.join(update).pipe(Effect.flatMap(() => updater.check())), { signal }).finally(() =>
+            updateListeners.delete(notify),
+          )
+        },
         apply: (version) => runPromise(updater.apply(version)),
       },
       packages: {

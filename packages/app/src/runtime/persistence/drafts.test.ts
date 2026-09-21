@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { createDraftStore, draftTextChunk, draftTextThreshold } from "./drafts"
+import { createDraftStore, draftTextChunk, draftTextThreshold, resolveBlobUrl } from "./drafts"
 
 function memoryDriver() {
   const documents = new Map<string, string>()
@@ -228,5 +228,93 @@ describe("draft store text externalization", () => {
     const store = createDraftStore(memory.driver)
     await store.setItem("doc", JSON.stringify({ prompt: [{ type: "text", content: large }] }))
     expect(JSON.parse(memory.documents.get("doc")!).prompt[0].content.blob.ids).toHaveLength(1)
+  })
+})
+
+describe("draft store image retention", () => {
+  const image = (byte: number) => new Blob([new Uint8Array(6).fill(byte)], { type: "image/png" })
+  const fresh = (grace = 0) => {
+    const memory = memoryDriver()
+    return { memory, store: createDraftStore(memory.driver, { grace }) }
+  }
+  // Release timers fire on the macrotask queue; a zero grace has fired after one tick.
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 5))
+  // An image with no object URL left gets a new one when its bytes are uploaded again.
+  const released = async (store: ReturnType<typeof createDraftStore>, byte: number, url: string) =>
+    (await store.putBlob(image(byte))).url !== url
+
+  test("an uploaded image no document references is released after the grace", async () => {
+    const { store } = fresh()
+    const orphan = await store.putBlob(image(1))
+    await tick()
+    expect(await released(store, 1, orphan.url)).toBe(true)
+  })
+
+  test("an image referenced within the grace is kept", async () => {
+    const { store } = fresh(50)
+    const pasted = await store.putBlob(image(2))
+    await store.setDocument("pinned", { prompt: [{ type: "image", blob: pasted }] })
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    expect(await released(store, 2, pasted.url)).toBe(false)
+  })
+
+  test("saving a document without an image or removing the document releases it", async () => {
+    const { store } = fresh()
+    const dropped = await store.putBlob(image(3))
+    const removed = await store.putBlob(image(4))
+    await store.setDocument("edited", { prompt: [{ type: "image", blob: dropped }] })
+    await store.setDocument("closed", { prompt: [{ type: "image", blob: removed }] })
+    await tick()
+    expect(await released(store, 3, dropped.url)).toBe(false)
+    expect(await released(store, 4, removed.url)).toBe(false)
+    await store.setDocument("edited", { prompt: [{ type: "text", content: "typed over it" }] })
+    await store.removeItem("closed")
+    await tick()
+    expect(await released(store, 3, dropped.url)).toBe(true)
+    expect(await released(store, 4, removed.url)).toBe(true)
+  })
+
+  test("an image referenced by two documents survives until both drop it", async () => {
+    const { store } = fresh()
+    const shared = await store.putBlob(image(5))
+    await store.setDocument("composer", { prompt: [{ type: "image", blob: shared }] })
+    await store.setDocument("history", { entries: [{ prompt: [{ type: "image", blob: shared }] }] })
+    await store.setDocument("composer", { prompt: [] })
+    await tick()
+    expect(await released(store, 5, shared.url)).toBe(false)
+    await store.setDocument("history", { entries: [] })
+    await tick()
+    expect(await released(store, 5, shared.url)).toBe(true)
+  })
+
+  test("loading a document pins the images it references without fetching their bytes", async () => {
+    const { memory, store } = fresh()
+    const reads: string[] = []
+    const getBlob = memory.driver.getBlob
+    memory.driver.getBlob = (id) => {
+      reads.push(id)
+      return getBlob(id)
+    }
+    const id = await memory.driver.putBlob(image(6))
+    memory.documents.set("loaded", JSON.stringify({ prompt: [{ type: "image", blob: { id } }] }))
+    const loaded = JSON.parse((await store.getItem("loaded"))!).prompt[0].blob
+    expect(loaded).toEqual({ id })
+    expect(reads).toEqual([])
+    // The first consumer that shows or sends the image loads it; the pin from the load keeps it.
+    const url = (await resolveBlobUrl(loaded))!
+    expect(url.startsWith("blob:")).toBe(true)
+    expect(reads).toEqual([id])
+    expect(await resolveBlobUrl(loaded)).toBe(url)
+    expect(reads).toEqual([id])
+    await tick()
+    expect(await released(store, 6, url)).toBe(false)
+    await store.removeItem("loaded")
+    await tick()
+    expect(await released(store, 6, url)).toBe(true)
+  })
+
+  test("a reference to bytes the store no longer holds resolves to nothing", async () => {
+    fresh()
+    expect(await resolveBlobUrl({ id: "gone" })).toBeUndefined()
   })
 })

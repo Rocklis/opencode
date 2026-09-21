@@ -1,6 +1,6 @@
-import { PluginContextProvider } from "@opencode-ai/plugin/tui"
+import { PluginContextProvider } from "@opencode/plugin/tui"
 import type { JSX } from "solid-js"
-import type { Context, Dialog, Page, SlotClaim, SlotMap, SlotPath, Toast } from "@opencode-ai/plugin/tui/context"
+import type { Context, Dialog, Page, SlotClaim, SlotMap, SlotPath, Toast } from "@opencode/plugin/tui/context"
 import type { Placement, PlacementKind } from "./structure"
 import { infoStringToFiletype, type MarkdownCodeBlockRenderer } from "@opentui/core"
 import { useRenderer } from "@opentui/solid"
@@ -95,7 +95,27 @@ export function createPluginContext(input: {
   const dialogApi = createDialogApi(host.dialog, provide)
   const toastApi: Toast = {
     show(options) {
-      host.toast.show({ ...options, variant: options.variant ?? "info" })
+      const toast = {
+        title: options.title,
+        message: options.message,
+        variant: options.variant ?? "info",
+        duration: options.duration,
+      }
+      const sessionID = options.sessionID
+      if (sessionID === undefined) {
+        host.toast.show(toast)
+        return
+      }
+      const route = host.route.data
+      if (route.type === "session" && host.data.session.root(route.sessionID) === host.data.session.root(sessionID)) {
+        host.toast.show(toast)
+        return
+      }
+      host.toast.show({
+        ...toast,
+        title: toast.title ?? host.data.session.get(sessionID)?.title,
+        action: { label: "Open", run: () => host.route.navigate({ type: "session", sessionID }) },
+      })
     },
   }
   // Unregistering after deactivation is a no-op: deactivate already resets
@@ -206,13 +226,19 @@ export function createPluginContext(input: {
           }),
         open(sessionID) {
           if (!host.sessionTabs.enabled()) return false
-          host.sessionTabs.select(sessionID)
+          host.sessionTabs.open(sessionID)
           return true
         },
         focus(sessionID) {
           if (!host.sessionTabs.enabled()) return false
-          if (!host.sessionTabs.tabs().some((tab) => tab.sessionID === sessionID)) return false
           host.sessionTabs.select(sessionID)
+          return true
+        },
+        move(sessionID, index) {
+          if (!host.sessionTabs.enabled()) return false
+          const target = host.data.session.root(sessionID)
+          if (!host.sessionTabs.tabs().some((tab) => tab.sessionID === target)) return false
+          host.sessionTabs.move(target, index)
           return true
         },
         close(sessionID) {

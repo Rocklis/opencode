@@ -1,16 +1,17 @@
 export * as PatchTool from "./patch.js"
 
-import type { Context } from "@opencode-ai/plugin/effect/plugin"
-import { ToolFailure } from "@opencode-ai/ai"
-import { FileDiff } from "@opencode-ai/schema/file-diff"
+import type { Context } from "@opencode/plugin/effect/plugin"
+import type { SessionHooks } from "@opencode/plugin/effect/session"
+import { ToolFailure } from "@opencode/ai"
+import { FileDiff } from "@opencode/schema/file-diff"
 import { Effect, Result, Schema } from "effect"
-import { Bom } from "@opencode-ai/util/bom"
+import { Bom } from "@opencode/util/bom"
 import { Environment } from "../../environment/index.js"
 import { Formatter } from "../../formatter.js"
 import { FileMutation } from "../../file-mutation.js"
 import { Location } from "../../location.js"
 import { FileAccess } from "../../file-access.js"
-import { Patch } from "@opencode-ai/util/patch"
+import { Patch } from "@opencode/util/patch"
 import { Permission } from "../../permission.js"
 import DESCRIPTION from "../patch.txt"
 import { fileDiff } from "./file-diff.js"
@@ -292,7 +293,7 @@ export const Plugin = {
       )
       .pipe(Effect.orDie)
 
-    yield* ctx.session.hook("context", (event) =>
+    const hook = (event: SessionHooks["context"]) =>
       Effect.sync(() => {
         const usePatch =
           event.model.id.includes("gpt-") && !event.model.id.includes("oss") && !event.model.id.includes("gpt-4")
@@ -302,8 +303,10 @@ export const Plugin = {
           return
         }
         delete event.tools.patch
-      }),
-    )
+      })
+    yield* ctx.session.hook("context", hook)
+    yield* ctx.session.hook("compaction", hook)
+    yield* ctx.session.hook("generate", hook)
   }),
 }
 

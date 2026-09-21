@@ -1,13 +1,13 @@
 import fs from "fs/promises"
 import path from "path"
 import { expect } from "bun:test"
-import { LanguageModel, LLMClient } from "@opencode-ai/ai"
-import { OpenAIChat } from "@opencode-ai/ai/protocols"
-import { TestLLM } from "@opencode-ai/ai/testing"
-import { llmClient } from "@opencode-ai/core/effect/app-node-platform"
-import { makeMemoryDriver } from "@opencode-ai/core/environment/index"
-import { SessionRunnerModel } from "@opencode-ai/core/session/runner/model"
-import { WorkspaceDriver } from "@opencode-ai/core/workspace/driver"
+import { LanguageModel, LLMClient } from "@opencode/ai"
+import { OpenAIChat } from "@opencode/ai/protocols"
+import { TestLLM } from "@opencode/ai/testing"
+import { llmClient } from "@opencode/core/effect/app-node-platform"
+import { makeMemoryDriver } from "@opencode/core/environment/index"
+import { SessionRunnerModel } from "@opencode/core/session/runner/model"
+import { WorkspaceDriver } from "@opencode/core/workspace/driver"
 import { Deferred, Effect, Fiber, Latch, Layer, Option, Schedule, Stream } from "effect"
 import { testEffect } from "../../core/test/lib/effect"
 import { tmpdir } from "../../core/test/fixture/tmpdir"
@@ -148,7 +148,7 @@ it.live(
         const modelMessage = Option.fromNullishOr(context.find((message) => message.type === "model-switched")).pipe(
           Option.getOrThrow,
         )
-        const message = yield* opencode.sessions.message({ sessionID: id, messageID: modelMessage.id })
+        const message = yield* opencode.sessions.message.get({ sessionID: id, messageID: modelMessage.id })
         yield* opencode.sessions.interrupt({ sessionID: id })
         const other = yield* opencode.sessions.create({ location: location(fixture) })
         const missingSessionID = fixture.sdk.Session.ID.create()
@@ -156,14 +156,14 @@ it.live(
           [
             opencode.sessions.log({ sessionID: missingSessionID }).pipe(Stream.runHead, Effect.flip),
             opencode.sessions.interrupt({ sessionID: missingSessionID }).pipe(Effect.flip),
-            opencode.sessions.message({ sessionID: missingSessionID, messageID: modelMessage.id }).pipe(Effect.flip),
+            opencode.sessions.message.get({ sessionID: missingSessionID, messageID: modelMessage.id }).pipe(Effect.flip),
             opencode.sessions.instructions.entry.list({ sessionID: missingSessionID }).pipe(Effect.flip),
             opencode.sessions.inbox.list({ sessionID: missingSessionID }).pipe(Effect.flip),
           ],
           { concurrency: "unbounded" },
         )
         const missingMessage = yield* Effect.flip(
-          opencode.sessions.message({
+          opencode.sessions.message.get({
             sessionID: other.id,
             messageID: modelMessage.id,
           }),

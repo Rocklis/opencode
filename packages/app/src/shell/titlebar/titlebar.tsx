@@ -2,10 +2,10 @@ import { createEffect, createMemo, createResource, Match, Show, Switch, untrack 
 import { createStore, unwrap } from "solid-js/store"
 import { Dynamic, Portal } from "solid-js/web"
 import { useLocation, useNavigate } from "@solidjs/router"
-import { IconButton } from "@opencode-ai/ui/icon-button"
-import { Icon } from "@opencode-ai/ui/icon"
-import { Keybind } from "@opencode-ai/ui/keybind"
-import { Tooltip } from "@opencode-ai/ui/tooltip"
+import { IconButton } from "@opencode/ui/icon-button"
+import { Icon } from "@opencode/ui/icon"
+import { Keybind } from "@opencode/ui/keybind"
+import { Tooltip } from "@opencode/ui/tooltip"
 
 import { LayoutRoute, useLayout } from "@/shell/state/layout"
 import { usePlatform } from "@/runtime/platform/platform"
@@ -28,9 +28,11 @@ import { TitlebarRightMount } from "@/shell/titlebar/right-slot"
 import { MobileDrawer, MobileDrawerContent, MobileDrawerLabel, MobileDrawerTrigger } from "@/shell/mobile-drawer"
 import { sessionTabTitle } from "./tab-title"
 import { SessionTabAvatar } from "@/shell/layout/session-tab-avatar"
-import { SessionProgressIndicatorV2 } from "@opencode-ai/session-ui/v2/session-progress-indicator-v2"
+import { SessionProgressIndicatorV2 } from "@opencode/session-ui/v2/session-progress-indicator-v2"
 import { projectForSession } from "@/shell/layout/helpers"
 import { useSettingsDialog } from "@/settings/command"
+import { updaterAction } from "@/shell/updates/action"
+import type { UpdaterState } from "@/shell/updates/types"
 import devIcon from "../../../../desktop/icons/dev/64x64.png"
 import betaIcon from "../../../../desktop/icons/beta/64x64.png"
 
@@ -43,8 +45,7 @@ const macTrafficLightsBaseWidth = 68
 const macTrafficLightsTopClearance = 28
 
 export type TitlebarUpdate = {
-  version: string | undefined
-  installing: boolean
+  state: UpdaterState | undefined
   install: () => void
 }
 
@@ -96,13 +97,14 @@ export function Titlebar(props: {
   })
 
   const updateState = createMemo<TitlebarUpdatePillState>(() => {
-    const installing = props.update?.installing ?? false
-    const version = props.update?.version
+    const state = props.update?.state
+    const installing = state?.status === "installing"
+    const version = state?.status === "ready" || state?.status === "download-required" ? state.version : undefined
     return {
       visible: version !== undefined || installing,
       installing,
       label: language.t("titlebar.update"),
-      ariaLabel: language.t("toast.update.action.installRestart"),
+      ariaLabel: language.t(updaterAction(state).label),
       title: version ? language.t("titlebar.updateVersion", { version }) : undefined,
       onInstall: () => props.update?.install(),
     }
@@ -349,9 +351,10 @@ export function Titlebar(props: {
               >
                 <button
                   type="button"
+                  data-titlebar-tab-action
                   data-action="vertical-tabs-home"
                   data-state={layout.route().type === "home" ? "pressed" : undefined}
-                  class="group mb-1 flex h-7 w-full shrink-0 items-center gap-1.5 rounded-[6px] ps-1.5 pe-2 text-[13px] leading-4 text-v2-text-text-faint hover:bg-v2-background-bg-layer-02 hover:text-v2-text-text-base data-[state=pressed]:bg-v2-background-bg-layer-02 data-[state=pressed]:text-v2-text-text-base"
+                  class="group mb-1 flex h-7 w-full shrink-0 items-center gap-1.5 rounded-[6px] ps-1.5 pe-2 text-[13px] leading-4 text-v2-text-text-faint hover:text-v2-text-text-base data-[state=pressed]:text-v2-text-text-base"
                   onClick={toggleHome}
                   aria-label={language.t("home.title")}
                   aria-pressed={layout.route().type === "home"}
@@ -503,7 +506,6 @@ export function Titlebar(props: {
                                     directory={value().location.directory}
                                     sessionId={value().id}
                                     server={tab().server}
-                                    revealProjectOnHover={false}
                                   />
                                 )}
                               </Show>
@@ -649,8 +651,9 @@ export function Titlebar(props: {
                             {homeButton(true)}
                             <button
                               type="button"
+                              data-titlebar-tab-action
                               data-action="vertical-tabs-new-session"
-                              class="group flex h-7 w-full shrink-0 items-center gap-1.5 rounded-[6px] ps-1.5 pe-2 text-[13px] leading-4 text-v2-text-text-faint hover:bg-v2-background-bg-layer-02 hover:text-v2-text-text-base"
+                              class="group flex h-7 w-full shrink-0 items-center gap-1.5 rounded-[6px] ps-1.5 pe-2 text-[13px] leading-4 text-v2-text-text-faint hover:text-v2-text-text-base"
                               onClick={openNewTab}
                               aria-label={language.t("command.session.new")}
                             >
@@ -680,9 +683,11 @@ export function Titlebar(props: {
                                 onReorder={(keys) => tabsStoreActions.reorder(keys)}
                               />
                             </div>
-                            <div data-slot="vertical-tabs-footer" class="mt-2 flex w-full shrink-0 flex-col">
-                              <TitlebarRightMount vertical />
-                            </div>
+                            <Show when={updateState().visible}>
+                              <div data-slot="vertical-tabs-footer" class="mt-2 flex w-full shrink-0 flex-col">
+                                <TitlebarUpdateIconButton state={updateState()} vertical />
+                              </div>
+                            </Show>
                           </Portal>
                         )}
                       </Show>
@@ -692,7 +697,9 @@ export function Titlebar(props: {
                 <Show when={!mobile()}>
                   <div class="flex-1" />
                 </Show>
-                <TitlebarRight state={rightState()} mount={!props.verticalTabs} />
+                <Show when={!props.verticalTabs}>
+                  <TitlebarRight state={rightState()} />
+                </Show>
               </div>
             )
           }}
@@ -715,34 +722,52 @@ type TitlebarRightState = {
   update: TitlebarUpdatePillState
 }
 
-function TitlebarRight(props: { state: TitlebarRightState; mount?: boolean }) {
+function TitlebarRight(props: { state: TitlebarRightState }) {
   return (
     <div class="relative z-20 flex shrink-0 items-center justify-end gap-0 overflow-visible">
       <Show when={props.state.update.visible}>
         <TitlebarUpdateIconButton state={props.state.update} />
       </Show>
-      <Show when={props.mount !== false}>
-        <TitlebarRightMount />
-      </Show>
+      <TitlebarRightMount />
     </div>
   )
 }
 
-function TitlebarUpdateIconButton(props: { state: TitlebarUpdatePillState }) {
+function TitlebarUpdateIconButton(props: { state: TitlebarUpdatePillState; vertical?: boolean }) {
+  const label = () => (
+    <span
+      class="shrink-0 text-[11px] leading-4 text-v2-text-text-accent [font-weight:530] opacity-0 motion-safe:transition-all duration-150 ease-out group-hover:opacity-100 group-hover:translate-x-0 group-focus-within:opacity-100 group-focus-within:translate-x-0 motion-reduce:translate-x-0"
+      classList={{
+        "ms-px me-4 -translate-x-2 rtl:translate-x-2": props.vertical,
+        "ms-2 me-px translate-x-2 rtl:-translate-x-2": !props.vertical,
+      }}
+    >
+      {props.state.label}
+    </span>
+  )
   return (
-    <div class="group relative mr-3 h-5 w-5 shrink-0 rounded-full bg-v2-background-bg-deep transition-[width] duration-150 ease-out hover:z-30 hover:w-[68px] focus-within:z-30 focus-within:w-[68px] motion-reduce:transition-none">
+    <div
+      data-slot="titlebar-update"
+      class="group relative shrink-0 rounded-full bg-v2-background-bg-deep transition-[width] duration-150 ease-out hover:z-30 focus-within:z-30 motion-reduce:transition-none"
+      classList={{
+        "h-7 w-7 self-start hover:w-[84px] focus-within:w-[84px]": props.vertical,
+        "me-3 h-5 w-5 hover:w-[68px] focus-within:w-[68px]": !props.vertical,
+      }}
+    >
       <button
         type="button"
-        class="absolute right-0 top-0 z-10 flex h-5 w-5 items-center justify-end overflow-hidden rounded-full bg-v2-icon-icon-accent/20 text-v2-icon-icon-accent transition-[width,background-color] duration-150 ease-out group-hover:w-[68px] group-hover:bg-[color-mix(in_srgb,var(--v2-icon-icon-accent)_20%,var(--v2-background-bg-deep))] group-focus-within:w-[68px] group-focus-within:bg-[color-mix(in_srgb,var(--v2-icon-icon-accent)_20%,var(--v2-background-bg-deep))] focus-visible:outline-none disabled:opacity-60 motion-reduce:transition-none"
+        class="absolute top-0 z-10 flex h-full w-full items-center overflow-hidden rounded-full bg-v2-icon-icon-accent/20 text-v2-icon-icon-accent transition-[background-color] duration-150 ease-out group-hover:bg-[color-mix(in_srgb,var(--v2-icon-icon-accent)_20%,var(--v2-background-bg-deep))] group-focus-within:bg-[color-mix(in_srgb,var(--v2-icon-icon-accent)_20%,var(--v2-background-bg-deep))] focus-visible:outline-none disabled:opacity-60 motion-reduce:transition-none [app-region:no-drag]"
+        classList={{ "start-0 justify-start": props.vertical, "end-0 justify-end": !props.vertical }}
         onClick={props.state.onInstall}
         disabled={props.state.installing}
         aria-busy={props.state.installing}
         aria-label={props.state.ariaLabel}
       >
-        <span class="shrink-0 ml-[8px] mr-px text-[11px] text-v2-text-text-accent [font-weight:530] opacity-0 translate-x-2 motion-safe:transition-all duration-150 ease-out group-hover:opacity-100 group-hover:translate-x-0 group-focus-within:opacity-100 group-focus-within:translate-x-0 motion-reduce:translate-x-0">
-          {props.state.label}
-        </span>
-        <span class="flex size-5 shrink-0 items-center justify-center">
+        <Show when={!props.vertical}>{label()}</Show>
+        <span
+          class="flex shrink-0 items-center justify-center"
+          classList={{ "size-7": props.vertical, "size-5": !props.vertical }}
+        >
           <Show
             when={!props.state.installing}
             fallback={<span data-slot="titlebar-update-loader" aria-hidden="true" />}
@@ -752,6 +777,7 @@ function TitlebarUpdateIconButton(props: { state: TitlebarUpdatePillState }) {
             </svg>
           </Show>
         </span>
+        <Show when={props.vertical}>{label()}</Show>
       </button>
     </div>
   )
@@ -768,7 +794,7 @@ function ChannelIndicator(props: {
   if (!channel || channel === "prod") return null
 
   const label = () => language.t(`titlebar.channel.${channel}`)
-  const debug = () => (channel === "dev" ? props.debugTools : undefined)
+  const debug = () => (channel === "dev" || channel === "local" ? props.debugTools : undefined)
   return (
     <Tooltip
       placement={props.sidebar ? "right" : "bottom"}

@@ -22,7 +22,7 @@ import type {
   Page,
   SlotClaim,
   Route,
-} from "@opencode-ai/plugin/tui/context"
+} from "@opencode/plugin/tui/context"
 import { ThemeProvider, useThemes } from "../../../src/context/theme"
 import { emptyThemeSource, tmpdir } from "../../fixture/fixture"
 import { StorageProvider, useStorage } from "../../../src/context/storage"
@@ -1847,7 +1847,7 @@ async function renderDiffViewer(
         ? options.baseResponse()
         : json({ location: session.location, data: options.base === undefined ? baseFixture : options.base })
     }
-    if (url.pathname === "/api/vcs/branches") {
+    if (url.pathname === "/api/vcs/branch") {
       branchesRequests.push(url)
       return options.branchesResponse
         ? options.branchesResponse(url)

@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { define } from "@opencode-ai/plugin/effect/plugin"
+import { define } from "@opencode/plugin/effect/plugin"
 import { Provider } from "../../provider.js"
 
 // Ambient inputs the AWS default credential chain can turn into credentials
@@ -13,10 +13,8 @@ const CHAIN_ENV = [
   "AWS_CONTAINER_CREDENTIALS_FULL_URI",
 ]
 
-const isBedrock = (item: { readonly package: string }) => {
-  const name = Provider.packageName(item.package)
-  return name.startsWith("@ai-sdk/amazon-bedrock") || name.startsWith("@opencode-ai/ai/providers/amazon-bedrock")
-}
+const isBedrock = (item: { readonly package: string }) =>
+  item.package.startsWith("@opencode/ai/providers/amazon-bedrock")
 
 export const AmazonBedrockPlugin = define({
   id: "opencode.provider.amazon.bedrock",
@@ -30,10 +28,10 @@ export const AmazonBedrockPlugin = define({
         method: { type: "env", names: ["AWS_BEARER_TOKEN_BEDROCK"] },
       })
     })
-    yield* ctx.catalog.transform((evt) => {
-      for (const item of evt.provider.list()) {
+    yield* ctx.provider.transform((evt) => {
+      for (const item of evt.list()) {
         if (!isBedrock(item.provider)) continue
-        evt.provider.update(item.provider.id, (provider) => {
+        evt.update(item.provider.id, (provider) => {
           const settings = provider.settings ?? {}
           const chain = typeof settings.profile === "string" || CHAIN_ENV.some((name) => process.env[name])
           // SigV4 authenticates through the AWS default chain rather than a key

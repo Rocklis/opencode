@@ -12,7 +12,8 @@
 
 Per-type constructors live on the type, not as top-level re-exports. Use `Message.system(...)`, `Message.user(...)`, `Message.assistant(...)`, `Message.tool(...)`, `LanguageModel.make(...)`, `ToolDefinition.make(...)`, `ToolCallPart.make(...)`, `ToolResultPart.make(...)`, `ToolChoice.make(...)`, `ToolChoice.named(...)`, `SystemPart.make(...)`, and `GenerationOptions.make(...)` directly. The top-level `LLM` namespace is reserved for request-shaped call APIs: `LLM.request`, `LLM.generate`, `LLM.stream`, and `LLM.generateObject`. Use `LLMRequest.update(...)` when deriving canonical request data; do not add a duplicate `LLM.updateRequest(...)` path. Two ways to construct the same thing is one too many.
 
-- Keep provider-defined string enums forward-compatible. Expose known values for autocomplete while accepting future values with `Known | (string & {})`; use `Schema.String` at runtime unless rejecting unknown values is required for correctness.
+- Prefer forward compatibility for provider-defined options that OpenCode only passes through. For pass-through string enums, expose known values for autocomplete while accepting future values with `Known | (string & {})`, and accept any string at runtime. Closed literals are appropriate when OpenCode branches on a value, transforms its associated structure, or otherwise cannot correctly handle an unknown variant. New options whose shape or behavior requires implementation remain unsupported until they are handled; do not blindly forward unknown structures.
+- Order reasoning-effort values from lowest to highest: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Provider-specific subsets follow the same relative order in types, schemas, option lists, and tests.
 
 ## Tests
 
@@ -121,13 +122,14 @@ Keep provider facades small and explicit:
 
 ### Provider Package Entrypoints
 
-Catalog-selected native providers use package-like export paths from `@opencode-ai/ai`. They are internal entrypoints in one npm package, not separately published provider packages. Every entrypoint implements `ProviderPackage.Definition` and exposes `model(modelID, settings)`, where settings are serializable provider configuration plus common `headers`, `body`, and `limits` overlays.
+Catalog-selected native providers use package-like export paths from `@opencode/ai`. They are internal entrypoints in one npm package, not separately published provider packages. Every entrypoint implements `ProviderPackage.Definition` and exposes `model(modelID, settings)`, where settings are one flat serializable object: the connection keys the entrypoint declares (`apiKey`, `baseURL`, `region`, …), the common `headers` and `body` overlays, and the protocol's request options (`reasoningEffort`, `thinking`, …) side by side. Each entrypoint destructures its own connection keys and passes the rest to the route as `providerOptions`; there is no nested `providerOptions` at the entrypoint.
 
 ```ts
-import { model } from "@opencode-ai/ai/providers/openai/responses"
+import { model } from "@opencode/ai/providers/openai/responses"
 
 const selected = model("gpt-5", {
   apiKey,
+  reasoningEffort: "high",
 })
 ```
 
@@ -163,6 +165,10 @@ Native chronological system messages are route/model-specific. Open Responses lo
 ```
 
 The wrapped-user fallback preserves ordering while visibly lowering authority. Never silently pass a raw chronological `role: "system"` through a route that might reject it. Do not insert raw retrieved documents, tool output, or web content into privileged chronological system updates; keep untrusted content in ordinary user/tool channels.
+
+### Effort Updates
+
+`Message.effort({ effort, previous })` is a chronological "reasoning effort changed here" marker (`undefined` means the model default). Changing a top-level effort invalidates the whole provider prompt cache, so protocols with a native per-message update (`Protocol.supportsEffortUpdates`) keep the top-level effort at the first marker's `previous` and lower each marker in place: Anthropic Messages emits an empty `role: "system"` message with `output_config.effort` plus the `mid-conversation-output-config-2026-07-01` beta, and OpenAI Responses emits `configuration_update` items. `applyEffortUpdates` runs in `prepareRequest` and strips the markers for every other route, so a protocol without support keeps today's plain top-level behaviour. When the last marker disagrees with the effort the request asks for (reverted or forked history), `resolveEffortUpdates` strips the markers and falls back to a plain top-level change.
 
 ### Tools
 

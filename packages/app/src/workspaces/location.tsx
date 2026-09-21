@@ -1,6 +1,6 @@
-import { createSimpleContext } from "@opencode-ai/ui/context"
-import type { LocationGetOutput, LocationRef } from "@opencode-ai/client/promise"
-import { retry } from "@opencode-ai/util/retry"
+import { createSimpleContext } from "@opencode/ui/context"
+import type { LocationGetOutput, LocationRef } from "@opencode/client/promise"
+import { retry } from "@opencode/util/retry"
 import { type Accessor, createEffect, createMemo, onCleanup } from "solid-js"
 import { type LocationContext, useServerSDK } from "@/runtime/server/client"
 import { useData, useServer } from "@/runtime/server/current"
@@ -45,9 +45,7 @@ const context = createSimpleContext({
       const id = current()?.project.id
       if (!id || serverSDK.connection.status() !== "connected") return
       // Showing a Location is the demand for its project's worktree inventory (workspace styling, picker).
-      // Key it by the metadata root so the result merges into the same global project record.
-      const root = server.ctx.sync.data.project.find((project) => project.id === id)?.worktree
-      if (root) void server.ctx.sync.worktrees.load(root)
+      void server.ctx.sync.worktrees.list(id).then(() => server.ctx.sync.worktrees.refresh(id))
     })
 
     const location = createMemo(() => serverSDK.ensureDirSdkContext(current()?.directory ?? ref().directory))

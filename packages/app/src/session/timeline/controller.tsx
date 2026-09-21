@@ -1,11 +1,11 @@
-import type { SessionMessageInfo } from "@opencode-ai/client/promise"
-import { DialogFooter, DialogHeader, DialogTitleGroup, Dialog } from "@opencode-ai/ui/dialog"
-import { Button } from "@opencode-ai/ui/button"
+import type { SessionMessageInfo } from "@opencode/client/promise"
+import { DialogFooter, DialogHeader, DialogTitleGroup, Dialog } from "@opencode/ui/dialog"
+import { Button } from "@opencode/ui/button"
 import { useNavigate } from "@solidjs/router"
 import { createEffect, createMemo, on } from "solid-js"
 import { createStore } from "solid-js/store"
 import { notifySessionTabsRemoved } from "@/shell/titlebar/session-events"
-import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { useDialog } from "@opencode/ui/context/dialog"
 import { useLanguage } from "@/runtime/i18n/language"
 import { useSettings } from "@/settings/model"
 import { useWorkspaceLocation } from "@/workspaces/location"
@@ -22,7 +22,7 @@ import { applyTimelineMessageHandoff, timelineChildTitle, visibleTimelineMessage
 import { createTimelineProjection } from "./projection"
 import { useServer } from "@/runtime/server/current"
 import { getSessionMessageHandoff } from "@/session/handoff"
-import type { ReasoningMode } from "@opencode-ai/session-ui/timeline/projection"
+import type { ReasoningMode } from "@opencode/session-ui/timeline/projection"
 
 const emptyMessages: SessionMessageInfo[] = []
 const taskDescription = (message: SessionMessageInfo, sessionID: string): string | undefined => {
@@ -80,13 +80,13 @@ export function createTimelineController(input: { session: TimelineSessionSource
     )
   })
   const titleValue = createMemo(() => input.session.data.info()?.title)
-  const titleLabel = createMemo(() => sessionTitle(titleValue()) ?? language.t("command.session.new"))
+  const titleLabel = createMemo(() => sessionTitle(titleValue()) ?? language.t("session.tab.session"))
   const parentMessages = createMemo(() => {
     const id = input.session.data.parentID()
     return id ? data.session.message.list(id) : emptyMessages
   })
   const parentTitle = createMemo(
-    () => sessionTitle(input.session.data.parent()?.title) ?? language.t("command.session.new"),
+    () => sessionTitle(input.session.data.parent()?.title) ?? language.t("session.tab.session"),
   )
   const childTaskDescription = createMemo(() => {
     const id = input.session.identity.sessionID()
@@ -100,7 +100,7 @@ export function createTimelineController(input: { session: TimelineSessionSource
       parentID: input.session.data.parentID(),
       taskDescription: childTaskDescription(),
       title: titleLabel(),
-      fallback: language.t("command.session.new"),
+      fallback: language.t("session.tab.session"),
     })
   })
   const showHeader = createMemo(() => !!input.session.identity.sessionID())
@@ -149,7 +149,7 @@ export function createTimelineController(input: { session: TimelineSessionSource
     if (!next || next === (titleLabel() ?? "")) return true
     setPending("rename", true)
     const success = await serverSDK.api.session
-      .rename({ sessionID: id, title: next })
+      .update({ sessionID: id, title: next })
       .then(() => true)
       .catch((error) => {
         showToast({ title: language.t("common.requestFailed"), description: errorMessage(error) })
@@ -209,7 +209,7 @@ export function createTimelineController(input: { session: TimelineSessionSource
 
   function DeleteDialog(props: { sessionID: string }) {
     const name = createMemo(
-      () => sessionTitle(data.session.get(props.sessionID)?.title) ?? language.t("command.session.new"),
+      () => sessionTitle(data.session.get(props.sessionID)?.title) ?? language.t("session.tab.session"),
     )
     const confirm = async () => {
       await remove(props.sessionID)

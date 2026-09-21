@@ -1,7 +1,7 @@
-import type { FileDiffInfo } from "@opencode-ai/client/promise"
-import type { SessionReviewLineComment } from "@opencode-ai/session-ui/session-review"
-import { previewSelectedLines } from "@opencode-ai/session-ui/pierre/selection-bridge"
-import { checksum } from "@opencode-ai/util/encode"
+import type { FileDiffInfo } from "@opencode/client/promise"
+import type { SessionReviewLineComment } from "@opencode/session-ui/session-review"
+import { previewSelectedLines } from "@opencode/session-ui/pierre/selection-bridge"
+import { checksum } from "@opencode/util/encode"
 import { createQuery, skipToken, useQueryClient } from "@tanstack/solid-query"
 import { debounce } from "@solid-primitives/scheduled"
 import { createEffect, createMemo, on, onCleanup, type Accessor } from "solid-js"
@@ -155,6 +155,9 @@ export function createSessionReview(input: {
   const count = () => diffs().length
   const hasChanges = () => count() > 0
   const ready = () => {
+    // A project without VCS never enables vcsQuery, so its status stays "pending" forever.
+    const project = input.session.project()
+    if (project && !project.vcs) return true
     if (mode() === "git" || mode() === "branch") return !vcsQuery.isPending
     return true
   }
@@ -396,6 +399,7 @@ export function createSessionReview(input: {
     deferRender: input.deferRender,
     details: {
       diffs: () => (detailsQuery.isFetched ? (detailsQuery.data ?? []) : undefined),
+      open: () => state.detailsOpen,
       setOpen: (open: boolean) => setState("detailsOpen", open),
     },
     diffVersion: () => vcsQuery.dataUpdatedAt,

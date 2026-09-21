@@ -1,9 +1,9 @@
 import type {
   AgentInfo,
   CommandInfo,
-  FormCancelInput,
+  SessionFormCancelInput,
   FormInfo,
-  FormReplyInput,
+  SessionFormReplyInput,
   IntegrationInfo,
   LocationRef,
   McpResource,
@@ -22,8 +22,8 @@ import type {
   ShellInfo,
   SkillInfo,
   VcsInfo,
-} from "@opencode-ai/client"
-import type { ResolvedTheme } from "@opencode-ai/theme/tui"
+} from "@opencode/client"
+import type { ResolvedTheme } from "@opencode/theme/tui"
 import type { CliRenderer, KeyEvent, MarkdownCodeBlockRenderer, Renderable } from "@opentui/core"
 import type { JSX } from "@opentui/solid"
 import type { Store } from "solid-js/store"
@@ -95,8 +95,8 @@ export interface Data {
       list(sessionID: string, location?: LocationRef): Array<FormInfo & { readonly location?: LocationRef }> | undefined
       sync(sessionID: string, location?: LocationRef): Promise<void>
       invalidate(sessionID: string, location?: LocationRef): void
-      reply(input: FormReplyInput, location?: LocationRef): Promise<void>
-      cancel(input: FormCancelInput, location?: LocationRef): Promise<void>
+      reply(input: SessionFormReplyInput, location?: LocationRef): Promise<void>
+      cancel(input: SessionFormCancelInput, location?: LocationRef): Promise<void>
     }
   }
   readonly project: {
@@ -191,6 +191,7 @@ export interface PanelInput {
 export interface SlotMap {
   readonly app: Readonly<Record<string, never>>
   readonly "home.footer": Readonly<Record<string, never>>
+  readonly "home.footer.status": Readonly<Record<string, never>>
   readonly "prompt.footer": PromptFooterInput
   readonly "prompt.footer.status": PromptFooterInput
   readonly "prompt.footer.file": PromptFooterInput
@@ -272,6 +273,8 @@ export interface ToastOptions {
   readonly message: string
   readonly variant?: ToastVariant
   readonly duration?: number
+  /** When this session's family is not open, the title defaults to the session title and the toast offers to open it. */
+  readonly sessionID?: string
 }
 
 export interface Toast {
@@ -487,10 +490,12 @@ export interface UI {
       readonly attention: boolean
       readonly unread?: "activity" | "error"
     }[]
-    /** Opens (or focuses) a tab for a session, adding it when not already open. Returns false when tabs are disabled. */
+    /** Opens a tab for a session without focusing it. Returns false when tabs are disabled. */
     open(sessionID: string): boolean
-    /** Focuses an already-open tab and returns false when it is not open. */
+    /** Opens a tab when needed, then focuses it. Returns false when tabs are disabled. */
     focus(sessionID: string): boolean
+    /** Moves an open tab to an index and returns false when it is not open. */
+    move(sessionID: string, index: number): boolean
     /** Closes an open tab, or the active tab when omitted, and returns false when no tab matched. */
     close(sessionID?: string): boolean
   }

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
-import type { OpenCodeEvent } from "@opencode-ai/client/promise"
-import { base64Encode } from "@opencode-ai/util/encode"
+import type { OpenCodeEvent } from "@opencode/client/promise"
+import { base64Encode } from "@opencode/util/encode"
 import { currentSession, mockOpenCodeServer } from "../utils/mock-server"
 import { expectAppVisible } from "../utils/waits"
 
@@ -248,7 +248,7 @@ for (const direction of ["ltr", "rtl"]) {
     expect(messageAfter).toEqual(messageBefore)
     await page.locator('[data-component="composer-editor"]').pressSequentially("Also: ")
     await expect(page.locator('[data-component="composer-editor"]')).toHaveText(`Also: ${followUp}`)
-    expect(mock.calls).toEqual(["worktree", "session", "prompt"])
+    await expect.poll(() => mock.calls).toEqual(["worktree", "session", "prompt"])
   })
 }
 
@@ -423,7 +423,7 @@ test("executes a selected slash command after creating its worktree", async ({ p
     .toEqual([
       {
         sessionID: pending.sessionID,
-        body: { command: "review", text: "latest commit", files: [], agents: [], skills: [], delivery: "steer" },
+        body: { name: "review", text: "latest commit", files: [], agents: [], skills: [], delivery: "steer" },
       },
     ])
   await expect(pending.shimmer).toHaveCount(0)
@@ -491,7 +491,8 @@ async function openDraft(
     if (request.method() !== "POST") return
     const path = new URL(request.url()).pathname
     if (path === "/api/worktree") {
-      expect(new URL(request.url()).searchParams.get("location[directory]")).toBe(directory)
+      expect(new URL(request.url()).searchParams.has("location[directory]")).toBe(false)
+      expect(request.postDataJSON()).toMatchObject({ projectID })
       calls.push("worktree")
       worktreeRequests.push(request.postDataJSON())
     }

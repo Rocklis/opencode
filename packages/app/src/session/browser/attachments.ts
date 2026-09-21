@@ -1,30 +1,28 @@
-import { batch, createEffect, createMemo, getOwner, onCleanup, runWithOwner } from "solid-js"
+import { batch, createEffect, createMemo, createRoot, getOwner, on, onCleanup, runWithOwner } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
-import { createSimpleContext } from "@opencode-ai/ui/context"
-import type { Browser } from "@opencode-ai/plugin-browser/rpc"
+import { createSimpleContext } from "@opencode/ui/context"
 import { useLanguage } from "@/runtime/i18n/language"
-import type { BrowserPaneCommand, BrowserPaneRegistration, BrowserPaneState } from "@/runtime/platform/browser-pane"
+import type { BrowserPaneCommand } from "@/runtime/platform/browser-pane"
 import { usePlatform } from "@/runtime/platform/platform"
 import type { useServer } from "@/runtime/server/current"
+import type { SessionStateKey } from "@/runtime/server/scope"
 import { useSettings } from "@/settings/model"
 import { findSessionTab, tabKey, useTabs } from "@/shell/tabs/tabs"
+import { useCurrentRoute, useLayout } from "@/shell/state/layout"
+import { sessionBrowserTab } from "@/shell/state/session-tabs"
+import { createEventListener } from "@solid-primitives/event-listener"
+import { createBrowserConnection, type BrowserConnectionState } from "./connection"
 
 type Server = ReturnType<typeof useServer>
 
-export type BrowserAttachment = {
-  registration?: BrowserPaneRegistration
-  browser: BrowserPaneState
-  error?: string
-}
+export type BrowserAttachment = BrowserConnectionState
 
 type Live = {
   server: Server
   sessionID: string
   /** Shell tab that owns this attachment once seen; it may route to a child session later. */
   tab?: string
-  registration?: BrowserPaneRegistration
-  retry?: ReturnType<typeof setTimeout>
-  attempts: number
+  connection: ReturnType<typeof createBrowserConnection>
   dispose: () => void
 }
 
@@ -38,12 +36,14 @@ export const { use: useBrowserAttachments, provider: BrowserAttachmentsProvider 
     const settings = useSettings()
     const language = useLanguage()
     const shellTabs = useTabs()
+    const layout = useLayout()
+    const route = useCurrentRoute()
     const owner = getOwner()
     const [store, setStore] = createStore<Record<string, BrowserAttachment | undefined>>({})
     // Servers whose plugin lacks the browser RPC; sessions on them stop retrying.
     const [unsupported, setUnsupported] = createStore<Record<string, true | undefined>>({})
     const live = new Map<string, Live>()
-    const focus = new Map<string, Set<(tabID: Browser.TabID) => void>>()
+    const preview = new Map<string, Set<(path: string) => void>>()
     const key = (server: Server, sessionID: string) => `${server.key}\n${sessionID}`
     const enabled = createMemo(
       () => !!platform.browserPane && settings.ready() && settings.general.experimentalBrowser(),
@@ -71,87 +71,104 @@ export const { use: useBrowserAttachments, provider: BrowserAttachmentsProvider 
     })
     onCleanup(() => Array.from(live.keys()).forEach(close))
 
+    const wakeCurrent = () => {
+      if (document.visibilityState !== "visible") return
+      const current = route()
+      if (current.type !== "session") return
+      live.get(`${current.server}\n${current.sessionId}`)?.connection.wake()
+    }
+    // These are edges, not a reactive dependency on suspended state: eviction while the window
+    // remains focused must not immediately reopen the browser and defeat resource cleanup.
+    createEffect(on(route, wakeCurrent))
+    createEventListener(window, "focus", wakeCurrent)
+    createEventListener(document, "visibilitychange", wakeCurrent)
+    createEventListener(document, "pointerdown", wakeCurrent)
+    createEventListener(document, "keydown", wakeCurrent)
+
     return {
       enabled,
       supported: (server: Server) => !unsupported[server.key],
       state: (server: Server, sessionID: string) => store[key(server, sessionID)],
-      attach(server: Server, sessionID: string) {
+      attach(server: Server, sessionID: string, sessionKey: SessionStateKey) {
         const id = key(server, sessionID)
         if (live.has(id)) return
         const pane = platform.browserPane
         if (!pane || !enabled() || unsupported[server.key] || server.health?.incompatible) return
-        const entry: Live = { server, sessionID, attempts: 0, dispose: () => undefined }
-        live.set(id, entry)
-        setStore(id, { browser: null })
-        const register = () => {
-          if (entry.registration || live.get(id) !== entry) return
-          // The server's shared transport follows a restarted sidecar's port whether or not any route
-          // for this session is mounted; the connection captured at attach time may predate it.
-          const endpoint = { ...server.conn.http, url: server.ctx.sdk.url }
-          const registration = pane.register({ sessionID, endpoint }, (event) => {
-            if (live.get(id) !== entry) return
-            if (event.type === "focus") return focus.get(id)?.forEach((listener) => listener(event.tabID))
-            if (event.error === "browser.pane.unsupported") {
+        // Focus requests write to the owning session's layout even while another shell tab is routed,
+        // so the Review pane and browser tab are already selected when the user returns to it.
+        const tabs = createRoot((dispose) => ({ dispose, layout: layout.tabs(sessionKey) }), owner)
+        const connection = createBrowserConnection({
+          pane,
+          // Resolve the current port at every wake, including after sidecar replacement.
+          target: () => ({
+            serverKey: server.key,
+            sessionID,
+            endpoint: { ...server.conn.http, url: server.ctx.sdk.url },
+          }),
+          focus: (tabID) => {
+            const tab = sessionBrowserTab(tabID)
+            batch(() => {
+              shellTabs.setPane(findSessionTab(shellTabs.store, server.key, sessionID), "review", true)
+              if (!tabs.layout.all().includes(tab)) tabs.layout.setAll([...tabs.layout.all(), tab])
+              tabs.layout.setActive(tab)
+            })
+          },
+          preview: (path) => preview.get(id)?.forEach((listener) => listener(path)),
+          change: (state) => {
+            if (state.error === "browser.pane.unsupported") {
               setUnsupported(server.key, true)
               return close(id)
             }
-            if (event.error === "browser.pane.replaced") {
-              registration.close()
-              entry.registration = undefined
-              return setStore(id, {
-                registration: undefined,
-                browser: null,
-                error: language.t("session.browser.replaced"),
-              })
-            }
-            // The desktop dropped the attachment (server restart, attach race). Re-register so the
-            // agent's browser tool comes back without a reload.
-            if (event.error === "browser.pane.registration.closed") {
-              registration.close()
-              entry.registration = undefined
-              setStore(id, { registration: undefined, browser: null, error: undefined })
-              entry.retry = setTimeout(register, Math.min(30_000, 1_000 * 2 ** entry.attempts++))
-              return
-            }
-            if (event.state) entry.attempts = 0
-            batch(() => {
-              setStore(id, "browser", reconcile(event.state))
-              setStore(id, "error", event.error ? language.t("common.requestFailed") : undefined)
-            })
-          })
-          entry.registration = registration
-          setStore(id, { registration, browser: null, error: undefined })
-        }
+            setStore(
+              id,
+              reconcile({
+                ...state,
+                error:
+                  state.error === "browser.pane.replaced"
+                    ? language.t("session.browser.replaced")
+                    : state.error
+                      ? language.t("common.requestFailed")
+                      : undefined,
+              }),
+            )
+          },
+        })
+        const entry: Live = { server, sessionID, connection, dispose: () => undefined }
+        live.set(id, entry)
+        setStore(id, { browser: null, suspended: false })
         // A new session appears in the UI before its server-side creation finishes. The listener
         // belongs to this provider, not to the route effect that happened to call attach().
         const data = server.ctx.data
-        const unsubscribe = runWithOwner(owner, () =>
+        const unsubscribe = runWithOwner(owner, () => [
           data.on("session.created", (event) => {
-            if (event.data.sessionID === sessionID) register()
+            if (event.data.sessionID === sessionID) connection.wake()
           }),
-        )
-        if (!data.session.creating(sessionID)) register()
+          data.on("session.execution.started", (event) => {
+            if (event.data.sessionID === sessionID) connection.wake()
+          }),
+        ])
+        if (!data.session.creating(sessionID)) connection.wake()
         entry.dispose = () => {
-          unsubscribe?.()
-          clearTimeout(entry.retry)
-          entry.registration?.close()
+          unsubscribe?.forEach((dispose) => dispose())
+          connection.dispose()
+          tabs.dispose()
         }
       },
-      /** Desktop focus requests for a mounted session route; nothing is replayed to routes mounted later. */
-      onFocus(server: Server, sessionID: string, listener: (tabID: Browser.TabID) => void) {
+      /** Agent requests to show a file in this session's Review pane. */
+      onPreview(server: Server, sessionID: string, listener: (path: string) => void) {
         const id = key(server, sessionID)
-        const listeners = focus.get(id) ?? new Set()
+        const listeners = preview.get(id) ?? new Set()
         listeners.add(listener)
-        focus.set(id, listeners)
+        preview.set(id, listeners)
         return () => {
           listeners.delete(listener)
-          if (!listeners.size) focus.delete(id)
+          if (!listeners.size) preview.delete(id)
         }
       },
       command(server: Server, sessionID: string, command: BrowserPaneCommand) {
-        const registration = live.get(key(server, sessionID))?.registration
-        if (!registration) return Promise.reject(new Error("browser.pane.unavailable"))
-        return registration.command(command)
+        const connection = live.get(key(server, sessionID))?.connection
+        if (!connection) return Promise.reject(new Error("browser.pane.unavailable"))
+        return connection.command(command)
       },
     }
   },

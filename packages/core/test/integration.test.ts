@@ -1,13 +1,13 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { Cause, Clock, Duration, Effect, Exit, Fiber, Layer, Scope, Stream } from "effect"
 import { TestClock } from "effect/testing"
-import { Credential } from "@opencode-ai/core/credential"
-import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
-import { makeGlobalNode } from "@opencode-ai/util/effect/app-node"
-import { LayerNode } from "@opencode-ai/util/effect/layer-node"
-import { Bus } from "@opencode-ai/core/bus"
-import { Integration } from "@opencode-ai/core/integration"
-import { State } from "@opencode-ai/core/state"
+import { Credential } from "@opencode/core/credential"
+import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
+import { makeGlobalNode } from "@opencode/util/effect/app-node"
+import { LayerNode } from "@opencode/util/effect/layer-node"
+import { Bus } from "@opencode/core/bus"
+import { Integration } from "@opencode/core/integration"
+import { State } from "@opencode/core/state"
 import { testEffect } from "./lib/effect"
 
 const it = testEffect(AppNodeBuilder.build(LayerNode.group([Integration.node, Credential.node, Bus.node])))
@@ -672,5 +672,18 @@ describe("Integration", () => {
           else process.env.INTEGRATION_TEST_ACME_KEY = previous
         }),
     )
+  })
+})
+
+describe("AuthorizationError", () => {
+  test("reports the underlying cause message", () => {
+    expect(new Integration.AuthorizationError({ cause: new Error("Request failed: 401") }).message).toBe(
+      "Request failed: 401",
+    )
+  })
+
+  test("falls back when the cause carries no message", () => {
+    expect(new Integration.AuthorizationError({ cause: new Error() }).message).toBe("Authorization failed")
+    expect(new Integration.AuthorizationError({ cause: undefined }).message).toBe("Authorization failed")
   })
 })

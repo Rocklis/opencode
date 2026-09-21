@@ -1,4 +1,4 @@
-import type { SessionMessageInfo, SessionMessageUser } from "@opencode-ai/client/promise"
+import type { SessionMessageInfo, SessionMessageUser } from "@opencode/client/promise"
 import { createMediaQuery } from "@solid-primitives/media"
 import { createMemo } from "solid-js"
 import { useFile } from "@/workspaces/files/model"
@@ -137,6 +137,7 @@ export function useSessionModel() {
       tabs: layout.tabs,
       view: layout.view,
       tabKey: layout.tabKey,
+      sessionKey: layout.sessionKey,
     },
     ownership: createSessionOwnership(layout.sessionKey),
     tabs: {

@@ -1,4 +1,4 @@
-import type { ProjectListOutput, WorktreeDirectory } from "@opencode-ai/client/promise"
+import type { ProjectListOutput, WorktreeDirectory } from "@opencode/client/promise"
 
 export type Project = Omit<ProjectListOutput[number], "canonical"> & {
   worktree: string
@@ -33,6 +33,8 @@ export type FileContent = {
   }
   encoding?: "base64"
   mimeType?: string
+  /** On-disk size when the bytes themselves are not retained. */
+  size?: number
 }
 
 export type Path = {

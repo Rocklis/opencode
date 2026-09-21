@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { createRoot } from "solid-js"
-import { Skill } from "@opencode-ai/schema/skill"
+import { Skill } from "@opencode/schema/skill"
 import { Schema, Option } from "effect"
 import { Persistence } from "@/runtime/persistence/schema"
 import { createMemoryComposerState, DEFAULT_PROMPT } from "./state"
@@ -88,6 +88,15 @@ describe("prompt state initialization", () => {
           start: 5,
           end: 12,
         },
+        // A reference without a usable URL keeps its id; the bytes resolve from the draft store on use.
+        {
+          type: "image",
+          id: "missing-blob",
+          filename: "missing.png",
+          mime: "image/png",
+          blob: { id: "content-hash-without-a-url", url: "" },
+        },
+        { type: "image", id: "invalid-url", filename: "invalid.png", mime: "image/png", blob: { id: "hash", url: "" } },
         {
           type: "image",
           id: "legacy",

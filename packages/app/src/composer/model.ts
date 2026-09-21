@@ -1,6 +1,6 @@
-import { ImagePreview } from "@opencode-ai/ui/image-preview"
-import { useDialog } from "@opencode-ai/ui/context/dialog"
-import type { ReferenceInfo } from "@opencode-ai/client/promise"
+import { ImagePreview } from "@opencode/ui/image-preview"
+import { useDialog } from "@opencode/ui/context/dialog"
+import type { ReferenceInfo } from "@opencode/client/promise"
 import { createComponent, createEffect, createMemo, on } from "solid-js"
 import type { ComposerSuggestion } from "./types"
 import { createComposerEditor, createComposerEditorState, type ComposerEditorModel } from "./editor/interaction"
@@ -11,17 +11,19 @@ import { useLanguage } from "@/runtime/i18n/language"
 import { useLayout } from "@/shell/state/layout"
 import { usePlatform } from "@/runtime/platform/platform"
 import { useWorkspaceLocation } from "@/workspaces/location"
-import { useData } from "@/runtime/server/current"
+import { resolveBlobUrl } from "@/runtime/persistence/drafts"
+import { useData, useServer } from "@/runtime/server/current"
 import { createSessionTabs } from "@/session/helpers"
 import { showToast } from "@/shell/notifications/toast"
 import { formatServerError } from "@/runtime/server/errors"
-import { Skill } from "@opencode-ai/schema/skill"
+import { Skill } from "@opencode/schema/skill"
 import type { ComposerAdapter, ComposerControls, ComposerQueue } from "./adapter"
-import type { ImageAttachmentPart } from "./state"
+import { isAttachment } from "./prompt-parts"
 import type { PromptHistoryComment } from "./history/entry"
 import { createComposerHistory } from "./history/store"
 import { composerPlaceholder } from "./placeholder"
-import { createComposerSubmit, withSlashSkill } from "./submit"
+import { createComposerSubmit } from "./submit"
+import { useAttachmentDestination } from "./attachments/destination"
 
 export type ComposerModel = ComposerEditorModel & {
   readonly model: ComposerControls["model"]
@@ -30,6 +32,8 @@ export type ComposerModel = ComposerEditorModel & {
 export function createComposerModel(adapter: ComposerAdapter, options?: { queue?: ComposerQueue }): ComposerModel {
   const sdk = useWorkspaceLocation()
   const data = useData()
+  const server = useServer()
+  const available = () => server.conn.type !== "ssh" || server.ctx.sdk.connection.status() === "connected"
   const files = useFile()
   const layout = useLayout()
   const comments = useComments()
@@ -70,7 +74,7 @@ export function createComposerModel(adapter: ComposerAdapter, options?: { queue?
     }, [])
   })
   const attachments = createMemo(() =>
-    prompt.current().filter((part): part is ImageAttachmentPart => part.type === "image"),
+    prompt.current().filter(isAttachment),
   )
   const commentCount = createMemo(() => {
     if (mode() === "shell") return 0
@@ -241,9 +245,6 @@ export function createComposerModel(adapter: ComposerAdapter, options?: { queue?
         type: "builtin" as const,
       })),
   ])
-  const slashSkills = createMemo(() =>
-    skills().filter((skill) => skill.slash === true && !slashCommands().some((item) => item.trigger === skill.id)),
-  )
   const commands = createMemo<ComposerSuggestion[]>(() => [
     ...slashCommands().map((item) => ({
       id: item.id,
@@ -254,32 +255,16 @@ export function createComposerModel(adapter: ComposerAdapter, options?: { queue?
       description: item.description,
       keybind: command.keybindParts(item.id),
     })),
-    ...slashSkills().map((skill) => ({
-      id: `skill:${skill.id}`,
-      kind: "skill" as const,
-      label: `/${skill.id}`,
-      trigger: skill.id,
-      title: skill.name,
-      description: skill.description,
-      mention: {
-        type: "skill" as const,
-        id: Skill.ID.make(skill.id),
-        name: Skill.Name.make(skill.name),
-        content: `/${skill.id}`,
-        start: 0,
-        end: 0,
-      },
-    })),
   ])
   const variants = createMemo(() => ["default", ...adapter.controls().model.selection.variant.list()])
   const submission = createComposerSubmit({
     adapter,
     mode,
     commands: () => data.location.command.list({ directory: sdk().directory }),
-    skills: slashSkills,
     editor: () => editor,
     queueScroll: () => requestAnimationFrame(() => editor?.scrollIntoView({ block: "nearest" })),
     addToHistory: (value, mode) => controller.addHistory(value, mode),
+    removeFromHistory: (value, mode, comments) => history.remove(value, mode, mode === "shell" ? [] : comments),
     resetHistory: () => controller.resetHistory(),
     setMode: (next) => controller.dispatch({ type: next === "shell" ? "mode.shell" : "mode.normal" }),
     closePopover: () => controller.dispatch({ type: "popover.close" }),
@@ -337,8 +322,12 @@ export function createComposerModel(adapter: ComposerAdapter, options?: { queue?
     onContextRemove(item) {
       if (item?.commentID) comments.remove(item.path, item.commentID)
     },
-    openAttachment: (attachment) =>
-      dialog.show(() => createComponent(ImagePreview, { src: attachment.blob.url, alt: attachment.filename })),
+    openAttachment: (attachment) => {
+      if (attachment.type !== "image") return
+      void resolveBlobUrl(attachment.blob).then((src) => {
+        if (src) dialog.show(() => createComponent(ImagePreview, { src, alt: attachment.filename }))
+      })
+    },
     openContext(key) {
       const item = controller.contextItem(key)
       if (item) openComment(item, adapter.controls(), layout, files, comments)
@@ -356,13 +345,15 @@ export function createComposerModel(adapter: ComposerAdapter, options?: { queue?
     attachments: {
       picker: platform.openAttachmentPickerDialog,
       directory: () => sdk().directory,
+      destination: useAttachmentDestination(adapter.controls),
       isDialogActive: () => !!dialog.active,
-      warn: () =>
-        showToast({
-          title: language.t("prompt.toast.pasteUnsupported.title"),
-          description: language.t("prompt.toast.pasteUnsupported.description"),
-        }),
       duplicate: () => showToast({ title: language.t("prompt.toast.attachmentDuplicate.title") }),
+      onUploadError: (error) =>
+        showToast({
+          variant: "error",
+          title: language.t("prompt.toast.uploadFailed.title"),
+          description: composerErrorMessage(language, error),
+        }),
       onError: (error) =>
         showToast({
           variant: "error",
@@ -394,16 +385,17 @@ export function createComposerModel(adapter: ComposerAdapter, options?: { queue?
         keybind: () => command.keybindParts("model.variant.cycle"),
       },
       submit: {
+        available,
         stopping,
         working: adapter.working,
         queue: options?.queue,
         onSubmit: (submitOptions) => {
+          if (!available()) return
           const queue = options?.queue
           // Confirming an edit re-admits the queued prompt instead of sending
           // the composer value as a new prompt. Enter keeps it queued in
           // place; the alternate action sends it as a steer.
           if (queue?.editing()) {
-            prompt.set(withSlashSkill(prompt.current(), slashSkills()))
             queue.confirmEdit(submitOptions?.alternate ? "steer" : "queue")
             return
           }
